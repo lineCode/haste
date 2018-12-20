@@ -1,0 +1,15 @@
+[package]
+name = "haste"
+version = "0.1.0"
+authors = ["wayslog <zxs867179@gmail.com>"]
+edition = "2018"
+
+[lib]
+name="libhaste"
+path="src/lib.rs"
+
+[[bin]]
+name="hasted"
+path="bin/hasted.rs"
+
+[dependencies]
