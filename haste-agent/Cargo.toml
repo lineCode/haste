@@ -1,0 +1,12 @@
+[package]
+name = "haste-agent"
+version = "0.1.0"
+authors = ["wayslog <zxs867179@gmail.com>"]
+edition = "2018"
+
+[[bin]]
+name="agent"
+path="src/main.rs"
+
+[dependencies]
+haste-core={ path="../haste-core" }

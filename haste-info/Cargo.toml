@@ -1,0 +1,11 @@
+[package]
+name = "haste-info"
+version = "0.1.0"
+authors = ["wayslog <zxs867179@gmail.com>"]
+edition = "2018"
+
+[lib]
+name="haste_info"
+path="src/lib.rs"
+
+[dependencies]

@@ -1,4 +1,25 @@
 [[package]]
-name = "haste"
+name = "haste-agent"
 version = "0.1.0"
+dependencies = [
+ "haste-core 0.1.0",
+]
+
+[[package]]
+name = "haste-core"
+version = "0.1.0"
+dependencies = [
+ "haste-info 0.1.0",
+]
+
+[[package]]
+name = "haste-info"
+version = "0.1.0"
+
+[[package]]
+name = "haste-leader"
+version = "0.1.0"
+dependencies = [
+ "haste-core 0.1.0",
+]
 
