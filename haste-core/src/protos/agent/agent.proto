@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package agent;
+
+service Agent {
+  rpc Deploy(CacheInfo) returns (CacheState) {}
+  rpc DoAction(Action) returns (CacheState) {}
+  rpc GetPorts(PortAcquire) returns (Ports) {}
+}
+
+message PortAcquire {
+  int64 count = 1;
+}
+
+message Ports {
+  repeated int64 ports = 1;
+}
+
+enum SystemdAction {
+  Restart = 0;
+  Start = 1;
+  Stop = 3;
+  Remove = 4;
+  Setup = 5;
+}
+
+message Action {
+   SystemdAction action = 1;
+   repeated Instance insts = 2;
+}
+
+enum CacheType {
+  Redis = 0;
+  RedisCluster = 1;
+  Memcache = 2;
+}
+
+message CacheInfo {
+  string job_id = 1;
+  CacheType cache_type = 2;
+  string cluster = 3;
+  string version = 4;
+  string file_server = 5;
+
+  repeated Instance insts = 10;
+}
+
+message Instance {
+  int64 port = 1;
+  repeated File files = 2;
+}
+
+message File {
+  string fpath = 1;
+  string content = 2;
+}
+
+enum State{
+  Done = 0;
+  Lost = 1;
+  Error = 2;
+}
+
+message CacheState {
+  State state = 1;
+  string msg = 2;
+}

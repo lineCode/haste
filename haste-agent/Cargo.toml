@@ -10,3 +10,4 @@ path="src/main.rs"
 
 [dependencies]
 haste-core={ path="../haste-core" }
+failure = "0.1"
