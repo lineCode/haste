@@ -51,6 +51,7 @@ use haste_info::say;
 mod protos;
 pub mod deploy;
 pub mod systemd;
+pub mod offer;
 
 
 pub use self::protos::agent::agent as proto;
