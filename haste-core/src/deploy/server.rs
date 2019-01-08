@@ -1,4 +1,5 @@
 use crate::chunk::{chunk_it, Chunks};
+use crate::myredis::MyRedis;
 use crate::offer::fetch_offer;
 use crate::proto::{CacheInfo, CacheType, File, Instance};
 use crate::proto_grpc::{Agent, AgentClient};
@@ -10,7 +11,7 @@ use log::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type CacheInfos = HashMap<String, CacheInfo>;
 
@@ -51,12 +52,16 @@ impl Template {
 pub struct DeployTask {
     retry: usize,
     param: DeployParm,
+    myredis: MyRedis,
 }
 
 impl DeployTask {
     pub fn deploy(&mut self) -> Result<(), Error> {
         info!("start to deploy cluster with param {:?}", self.param);
+
         let chunks = self.create_chunks()?;
+        self.myredis.set_chunks(&chunks);
+
         let template = self.load_template()?;
         let cache_infos = self.chunks_as_cache_infos(&chunks, &template);
 
@@ -130,7 +135,6 @@ impl DeployTask {
         Err(format_err!("fail to create cluster at lest"))
     }
 
-
     fn check_all_done(&mut self, cache_infos: &CacheInfos) -> Result<(), Error> {
         let ths: Vec<_> = cache_infos
             .iter()
@@ -161,18 +165,31 @@ impl DeployTask {
         Ok(())
     }
 
-    fn save_into_etcd(&mut self, _chunks: &Chunks, _tempate: &Template) -> Result<(), Error> {
-        unimplemented!()
-    }
-
     fn balance(&mut self) -> Result<(), Error> {
         // wait for cluster consistent
         // # if not try bump epoch
         // wait for totally in 3 minutes
         // each wait with 3 second
+        let instant = Instant::now();
 
         // trying to balance by send failover
-        unimplemented!()
+        loop {
+            if instant.elapsed().as_secs() > 60 * 3 {
+                return Ok(());
+            }
+
+            thread::sleep(Duration::from_secs(3));
+
+            if !self.myredis.is_consistent()? {
+                self.myredis.bumpepoch()?;
+                continue;
+            }
+
+            if self.myredis.is_balanced()? {
+                return Ok(());
+            }
+            self.myredis.balance()?;
+        }
     }
 
     fn send_deploy(&self, cache_infos: CacheInfos) -> Result<(), Error> {
@@ -201,10 +218,6 @@ impl DeployTask {
         Ok(())
     }
 
-    fn load_template(&self) -> Result<Template, Error> {
-        unimplemented!()
-    }
-
     fn create_chunks(&self) -> Result<Chunks, Error> {
         let offers = fetch_offer();
         let num = (self.param.total_memory / self.param.max_memory + 1) / 2 * 2;
@@ -212,6 +225,14 @@ impl DeployTask {
         let chunks = chunk_it(num, self.param.cpu_percent, self.param.max_memory, &offers)?;
 
         Ok(chunks)
+    }
+
+    fn save_into_etcd(&mut self, _chunks: &Chunks, _tempate: &Template) -> Result<(), Error> {
+        unimplemented!()
+    }
+
+    fn load_template(&self) -> Result<Template, Error> {
+        unimplemented!()
     }
 }
 

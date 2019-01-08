@@ -26,16 +26,39 @@ impl<'a> From<&'a Chunks> for MyRedis {
     }
 }
 
+impl Default for MyRedis {
+    fn default() -> MyRedis {
+        MyRedis {
+            nodes: HashMap::new(),
+        }
+    }
+}
+
 impl MyRedis {
+    pub fn set_chunks(&mut self, chunks: &Chunks) {
+        self.nodes.clear();
+        for inst in &chunks.0[..] {
+            let uri = format!("redis://{}:{}", inst.host, inst.port);
+            let node = Node::open(&uri).expect("fail to open node connection");
+            self.nodes.insert(uri, node);
+        }
+    }
+
     pub fn execute<T, C>(&mut self, to: &str, cmd: C) -> Result<T, Error>
     where
         T: FromRedisValue,
         C: Borrow<str>,
     {
+        let addr = if to.starts_with("redis://") {
+            to.to_string()
+        } else {
+            format!("redis://{}", to)
+        };
+
         let node = self
             .nodes
-            .entry(to.to_string())
-            .or_insert_with(|| Node::open(to).expect("fail to open conenction"));
+            .entry(addr.clone())
+            .or_insert_with(|| Node::open(&addr).expect("fail to open conenction"));
         node.execute(cmd)
     }
 
