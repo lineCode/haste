@@ -1,7 +1,7 @@
 use crate::chunk::{Chunks, ROLE_MASTER, ROLE_SLAVE};
 
 use failure::Error;
-use redis::{self, Client, FromRedisValue, Connection};
+use redis::{self, Client, Connection, FromRedisValue};
 
 use std::borrow::Borrow;
 use std::collections::hash_map::DefaultHasher;
@@ -14,8 +14,15 @@ pub struct MyRedis {
 }
 
 impl<'a> From<&'a Chunks> for MyRedis {
-    fn from(_chunks: &'a Chunks) -> MyRedis {
-        unimplemented!()
+    fn from(chunks: &'a Chunks) -> MyRedis {
+        let mut nodes = HashMap::new();
+        for inst in &chunks.0[..] {
+            let uri = format!("redis://{}:{}", inst.host, inst.port);
+            let node = Node::open(&uri).expect("fail to open node connection");
+            nodes.insert(uri, node);
+        }
+
+        MyRedis { nodes }
     }
 }
 
@@ -37,7 +44,7 @@ impl MyRedis {
         T: FromRedisValue,
         C: Borrow<str>,
     {
-        self.execute(&*format!("{}:{}", host, port), cmd)
+        self.execute(&*format!("redis://{}:{}", host, port), cmd)
     }
 
     pub fn execute_all<T, C>(&mut self, cmd: C) -> Result<Vec<T>, Error>
@@ -120,7 +127,7 @@ impl Node {
         Ok(())
     }
 
-    fn check_role_with_conn(&mut self, conn: &Connection) -> Result<bool, Error>{
+    fn check_role_with_conn(&mut self, conn: &Connection) -> Result<bool, Error> {
         let info: String = redis::cmd("INFO").arg("REPLICATION").query(conn)?;
         for line in info.split('\n') {
             if line.contains("role") && line.contains(&self.role) {
