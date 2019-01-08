@@ -1,17 +1,20 @@
-use crate::chunk::{Chunks, ROLE_MASTER};
+use crate::chunk::{Chunks, ROLE_MASTER, ROLE_SLAVE};
 
 use failure::Error;
-use redis::{self, Client, FromRedisValue};
+use redis::{self, Client, FromRedisValue, Connection};
 
 use std::borrow::Borrow;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::Hasher;
+use std::u64;
 
 pub struct MyRedis {
     nodes: HashMap<String, Node>,
 }
 
 impl<'a> From<&'a Chunks> for MyRedis {
-    fn from(chunks: &'a Chunks) -> MyRedis {
+    fn from(_chunks: &'a Chunks) -> MyRedis {
         unimplemented!()
     }
 }
@@ -52,19 +55,50 @@ impl MyRedis {
     }
 
     pub fn is_consistent(&mut self) -> Result<bool, Error> {
-        unimplemented!()
+        let mut latest = u64::MAX;
+        for (_addr, node) in self.nodes.iter_mut() {
+            let mut hasher = DefaultHasher::default();
+            let content: String = node.execute("CLUSTER NODES")?;
+            for slot in parse_slots(&content) {
+                if slot == "" {
+                    return Ok(false);
+                }
+                hasher.write(slot.as_bytes());
+            }
+            let value = hasher.finish();
+            if latest == u64::MAX {
+                latest = value;
+            }
+            if latest != value {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub fn bumpepoch(&mut self) -> Result<(), Error> {
-        unimplemented!()
+        for (_, node) in self.nodes.iter_mut() {
+            if node.role == ROLE_MASTER {
+                let _: () = node.execute("CLUSTER BUMPEPOCH")?;
+            }
+        }
+        Ok(())
     }
 
     pub fn balance(&mut self) -> Result<(), Error> {
-        unimplemented!()
+        for (_, node) in self.nodes.iter_mut() {
+            node.try_balance()?;
+        }
+        Ok(())
     }
 
     pub fn is_balanced(&mut self) -> Result<bool, Error> {
-        unimplemented!()
+        for (_, node) in self.nodes.iter_mut() {
+            if !node.check_role()? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -74,6 +108,36 @@ struct Node {
 }
 
 impl Node {
+    fn try_balance(&mut self) -> Result<(), Error> {
+        if self.role == ROLE_MASTER {
+            return Ok(());
+        }
+        let conn = self.client.get_connection()?;
+        if self.check_role_with_conn(&conn)? {
+            return Ok(());
+        }
+        let _: () = redis::cmd("CLUSTER").arg("FAILOVER").query(&conn)?;
+        Ok(())
+    }
+
+    fn check_role_with_conn(&mut self, conn: &Connection) -> Result<bool, Error>{
+        let info: String = redis::cmd("INFO").arg("REPLICATION").query(conn)?;
+        for line in info.split('\n') {
+            if line.contains("role") && line.contains(&self.role) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn check_role(&mut self) -> Result<bool, Error> {
+        if self.role == "" {
+            return Ok(true);
+        }
+        let conn = self.client.get_connection()?;
+        self.check_role_with_conn(&conn)
+    }
+
     fn open(addr: &str) -> Result<Node, Error> {
         let client = Client::open(addr)?;
         Ok(Node {
@@ -98,4 +162,52 @@ impl Node {
         let value = command.query(&conn)?;
         Ok(value)
     }
+}
+
+fn parse_slots(src: &str) -> Vec<String> {
+    let mut slots = Vec::with_capacity(16384);
+    slots.resize(16384, "".to_string());
+
+    for line in src.split('\n') {
+        if line.len() == 0 {
+            continue;
+        }
+        if line.contains(ROLE_SLAVE) {
+            continue;
+        }
+        if line.contains("fail") {
+            continue;
+        }
+
+        let items: Vec<_> = line.split(' ').collect();
+        let addr = items[1].split('@').next().unwrap().to_string();
+
+        for item in &items[8..] {
+            if item.contains("-<-") {
+                continue;
+            }
+
+            if item.contains("->-") {
+                let first = item
+                    .trim_matches('[')
+                    .split("->-")
+                    .next()
+                    .expect("migrating slot must contains first");
+                let mslot = first.parse::<usize>().unwrap();
+                slots[mslot] = addr.clone();
+                continue;
+            }
+
+            let mut iter = item.split('-');
+            let begin = iter.next().unwrap().parse::<usize>().unwrap();
+            let mut end = begin;
+            if let Some(ival) = iter.next() {
+                end = ival.parse::<usize>().unwrap();
+            }
+            for s in begin..=end {
+                slots[s] = addr.clone();
+            }
+        }
+    }
+    slots
 }
