@@ -1,6 +1,6 @@
 
 
-pub fn acquire_offer() -> Vec<Offer> {
+pub fn fetch_offer() -> Vec<Offer> {
     unimplemented!()
 }
 
@@ -8,8 +8,9 @@ pub fn acquire_offer() -> Vec<Offer> {
 /// agent report Offer by using offer
 #[derive(Clone, Debug)]
 pub struct Offer {
-    host: String,
-    cpu: f64,
-    memory: f64,
-    ports: Vec<u32>,
+    pub host: String,
+    // CPU is the a percentage value.
+    pub cpu: usize,
+    pub memory: usize,
+    pub ports: Vec<usize>,
 }

@@ -52,9 +52,12 @@ mod protos;
 pub mod deploy;
 pub mod systemd;
 pub mod offer;
+pub mod chunk;
+pub mod myredis;
 
 
 pub use self::protos::agent::agent as proto;
+pub use self::protos::agent::agent_grpc as proto_grpc;
 
 pub fn run() {
     say();
