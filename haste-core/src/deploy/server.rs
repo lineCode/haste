@@ -1,12 +1,17 @@
 use crate::chunk::{chunk_it, Chunks};
+use crate::myetcd::MyEtcd;
 use crate::myredis::MyRedis;
 use crate::offer::fetch_offer;
 use crate::proto::{CacheInfo, CacheType, File, Instance};
-use crate::proto_grpc::{Agent, AgentClient};
+use crate::proto_grpc::AgentClient;
+use crate::systemd::service_name;
 
+use etcd::kv::{KeyValueInfo, Node};
+use etcd::Response;
 use failure::{format_err, Error};
 use grpcio::{ChannelBuilder, EnvBuilder};
 use log::{error, info, warn};
+use tera::{Context, Tera};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,6 +29,7 @@ type CacheInfos = HashMap<String, CacheInfo>;
 //                      /config/[dial_timeout,fetch_interval]
 //  /haste/appids/{appid}/{cluster_name}/[config]/[dial_timeout,fetch_interval]
 //  /haste/templates/cache_type/name/
+//  /haste/agent/{ip} -> port
 #[derive(Clone, Debug)]
 pub struct DeployParm {
     pub name: String,
@@ -39,13 +45,66 @@ pub struct DeployParm {
     pub cache_type: CacheType,
     pub appids: String,
     pub group: String,
+    pub dial_timeout: Option<u64>,
+    pub read_timeout: Option<u64>,
+    pub write_timeout: Option<u64>,
 }
 
-pub struct Template {}
-
+pub struct Template {
+    tera: Tera,
+}
+#[allow(unused)]
 impl Template {
-    fn render(&self, _chunks: &Chunks, _host: &String, _port: usize) -> Vec<File> {
+    // need render keys:
+    //  * /data/cache/{port}/start-mc.sh
+    //  * /etc/systemd/system/cache-{port}.service
+    fn render_memcache(&self, host: &str, port: usize) -> Vec<File> {
         unimplemented!()
+    }
+
+    // need render keys:
+    //  * /data/cache/{port}/redis.conf
+    //  * /etc/systemd/system/cache-{port}.service
+    fn render_redis(&self, host: &str, port: usize, param: &DeployParm) -> Vec<File> {
+        unimplemented!()
+    }
+
+    // need render keys:
+    //  * /data/cache/{port}/nodes.conf
+    //  * /data/cache/{port}/redis.conf
+    //    ** port: usize
+    //  * /etc/systemd/system/cache-{port}.service
+    //    ** port: usize
+    //    ** version: String
+    fn render_cluster(
+        &self,
+        chunks: &Chunks,
+        host: &str,
+        port: usize,
+        param: &DeployParm,
+    ) -> Vec<File> {
+        let mut ncf = File::new();
+        ncf.set_fpath(format!("/data/cache/{port}/nodes.conf", port = port));
+        let nodes_conf = chunks.as_nodes_conf(host, port);
+        ncf.set_content(nodes_conf);
+
+        let mut port_ctx = Context::new();
+        port_ctx.insert("port", &port);
+
+        let mut rcf = File::new();
+        rcf.set_fpath(format!("/data/cache/{port}/redis.conf", port = port));
+        let redis_conf = self.tera.render("redis.conf", &port_ctx).unwrap();
+        rcf.set_content(redis_conf);
+
+        let mut service_ctx = Context::new();
+        service_ctx.insert("port", &port);
+        service_ctx.insert("version", &param.version);
+
+        let mut csf = File::new();
+        csf.set_fpath(format!("/etc/systemd/system/{}", service_name(port as i64)));
+        let content = self.tera.render("cache.service", &service_ctx).unwrap();
+        csf.set_content(content);
+        vec![ncf, rcf, csf]
     }
 }
 
@@ -53,6 +112,7 @@ pub struct DeployTask {
     retry: usize,
     param: DeployParm,
     myredis: MyRedis,
+    myetcd: MyEtcd,
 }
 
 impl DeployTask {
@@ -100,7 +160,12 @@ impl DeployTask {
 
                 let mut instances = Vec::new();
                 for i in &insts[..] {
-                    let files = template.render(chunks, &i.host, i.port);
+                    let files = match self.param.cache_type {
+                        CacheType::RedisCluster => {
+                            template.render_cluster(chunks, &i.host, i.port, &self.param)
+                        }
+                        _ => unreachable!(),
+                    };
                     let mut instance = Instance::new();
                     instance.set_port(i.port as i64);
                     instance.set_files(files.into());
@@ -195,9 +260,9 @@ impl DeployTask {
     fn send_deploy(&self, cache_infos: CacheInfos) -> Result<(), Error> {
         let mut ths = Vec::new();
         for (host, cache_info) in cache_infos.into_iter() {
+            let addr = self.get_grpc_addr(&host)?.unwrap();
             let th = thread::spawn(move || {
                 let env = Arc::new(EnvBuilder::new().build());
-                let addr = get_grpc_addr(&host).unwrap();
                 let ch = ChannelBuilder::new(env).connect(&addr);
                 let client = AgentClient::new(ch);
                 client.deploy(&cache_info)
@@ -223,10 +288,35 @@ impl DeployTask {
         let num = (self.param.total_memory / self.param.max_memory + 1) / 2 * 2;
         info!("chunk_it with num {}", num);
         let chunks = chunk_it(num, self.param.cpu_percent, self.param.max_memory, &offers)?;
-
         Ok(chunks)
     }
 
+    fn get_grpc_addr(&self, host: &str) -> Result<Option<String>, Error> {
+        let Response {
+            data:
+                KeyValueInfo {
+                    node: Node { value, .. },
+                    ..
+                },
+            ..
+        } = self.myetcd.get(&format!("/haste/agent/{}", host))?;
+
+        Ok(value)
+    }
+
+    //                      /appids/{appids}
+    //                      /cache_type -> {redis, redis_cluster, memcache}
+    //                      /audit/{task_id}/[checkpoint, state]
+    //                      /feport
+    //                      /config/[dial_timeout,fetch_interval]
+    // set process
+    //  1. generate fe-port
+    //  2. write instances
+    //  2.1 write [role/slots/slaveof] | [alias/weight]
+    //  2.2 write state
+    //  3. write cache_type
+    //  4. write configs
+    //  5. write audit log as create new items with time key
     fn save_into_etcd(&mut self, _chunks: &Chunks, _tempate: &Template) -> Result<(), Error> {
         unimplemented!()
     }
@@ -237,10 +327,6 @@ impl DeployTask {
 }
 
 pub struct Dist {}
-
-fn get_grpc_addr(host: &str) -> Option<String> {
-    unimplemented!()
-}
 
 fn check_redis(addr: &str) -> Result<(), Error> {
     let client = redis::Client::open(addr)?;

@@ -277,6 +277,20 @@ struct InstanceCount {
 
 pub struct Chunks(pub Vec<Instance>);
 
+impl Chunks {
+    pub fn as_nodes_conf(&self, host: &str, port: usize) -> String {
+        let lines: Vec<_> = self
+            .0
+            .iter()
+            .map(|inst| {
+                let myself = inst.host == host && inst.port == port;
+                inst.as_conf_line(myself)
+            })
+            .collect();
+        lines.join("\n")
+    }
+}
+
 pub struct Instance {
     pub host: String,
     pub port: usize,
@@ -288,7 +302,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn as_conf_line(&self, myself: bool) -> String {
+    fn as_conf_line(&self, myself: bool) -> String {
         let flags = if myself {
             format!("myself,{}", self.role)
         } else {
@@ -297,6 +311,12 @@ impl Instance {
         let slots: Vec<_> = self.slots.iter().map(|x| format!("{}", x)).collect();
         let slots_str = slots.join(" ");
 
+        let slaveof = if self.slaveof == "-" {
+            self.slaveof.clone()
+        } else {
+            format!("{:040}", self.slaveof)
+        };
+
         format!(
             "{} {}:{}@{} {} {} 0 0 0 connected {}\n",
             self.runid,
@@ -304,7 +324,7 @@ impl Instance {
             self.port,
             self.port + 10000,
             flags,
-            self.slaveof,
+            slaveof,
             slots_str,
         )
     }

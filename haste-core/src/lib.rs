@@ -46,15 +46,18 @@
 //!  * trying to send restart commanad when deploy fail.
 //!
 
+#[macro_use]
+extern crate tera;
+
 use haste_info::say;
 
-mod protos;
-pub mod deploy;
-pub mod systemd;
-pub mod offer;
 pub mod chunk;
+pub mod deploy;
+pub mod myetcd;
 pub mod myredis;
-
+pub mod offer;
+mod protos;
+pub mod systemd;
 
 pub use self::protos::agent::agent as proto;
 pub use self::protos::agent::agent_grpc as proto_grpc;
@@ -62,7 +65,6 @@ pub use self::protos::agent::agent_grpc as proto_grpc;
 pub fn run() {
     say();
 }
-
 
 /// server acquire resource -> by using offer
 /// agent report Offer by using offer
