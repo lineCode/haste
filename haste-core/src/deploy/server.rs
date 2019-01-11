@@ -55,18 +55,47 @@ pub struct Template {
 }
 #[allow(unused)]
 impl Template {
-    // need render keys:
-    //  * /data/cache/{port}/start-mc.sh
     //  * /etc/systemd/system/cache-{port}.service
-    fn render_memcache(&self, host: &str, port: usize) -> Vec<File> {
-        unimplemented!()
+    //    ** port: uszie
+    //    ** version: uszie
+    //    ** thread: uszie
+    //    ** max_memory: uszie
+    fn render_memcache(&self, host: &str, port: usize, param: &DeployParm) -> Vec<File> {
+        let thread = (param.cpu_percent + 99) / 100;
+        let mut service_ctx = Context::new();
+        service_ctx.insert("port", &port);
+        service_ctx.insert("version", &param.version);
+        service_ctx.insert("max_memory", &param.max_memory);
+        service_ctx.insert("thread", &thread);
+
+        let mut csf = File::new();
+        csf.set_fpath(format!("/etc/systemd/system/{}", service_name(port as i64)));
+        let content = self.tera.render("cache.service", &service_ctx).unwrap();
+        csf.set_content(content);
+        vec![csf]
     }
 
     // need render keys:
     //  * /data/cache/{port}/redis.conf
     //  * /etc/systemd/system/cache-{port}.service
     fn render_redis(&self, host: &str, port: usize, param: &DeployParm) -> Vec<File> {
-        unimplemented!()
+        let mut port_ctx = Context::new();
+        port_ctx.insert("port", &port);
+
+        let mut rcf = File::new();
+        rcf.set_fpath(format!("/data/cache/{port}/redis.conf", port = port));
+        let redis_conf = self.tera.render("redis.conf", &port_ctx).unwrap();
+        rcf.set_content(redis_conf);
+
+        let mut service_ctx = Context::new();
+        service_ctx.insert("port", &port);
+        service_ctx.insert("version", &param.version);
+
+        let mut csf = File::new();
+        csf.set_fpath(format!("/etc/systemd/system/{}", service_name(port as i64)));
+        let content = self.tera.render("cache.service", &service_ctx).unwrap();
+        csf.set_content(content);
+        vec![rcf, csf]
     }
 
     // need render keys:
